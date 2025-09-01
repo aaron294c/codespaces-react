@@ -1,7 +1,7 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 
-const tab = ({ to, icon, label, exact }) => (
+const Tab = ({ to, icon, label, exact }) => (
   <NavLink
     to={to}
     end={exact}
@@ -20,7 +20,7 @@ export default function BottomNav() {
   return (
     <footer className="sticky bottom-0 bg-white/95 backdrop-blur-md safe-area-bottom border-t border-gray-200/80">
       <nav className="flex justify-around items-center h-16 px-4">
-        {tab({ to: "/home", icon: "home", label: "Home", exact: true })}
+        {tab({ to: "/dashboard", icon: "home", label: "Home", exact: true })}
         {tab({ to: "/insights", icon: "bar_chart", label: "Insights" })}
         <NavLink to="/expense" className="w-16 h-16 flex items-center justify-center">
           <span className="flex items-center justify-center size-14 bg-blue-600 text-white rounded-full shadow-lg">
