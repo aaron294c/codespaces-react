@@ -1,56 +1,50 @@
-// src/context/AuthContext.jsx
 import React, { createContext, useContext, useState, useEffect } from "react";
-import { supabase, dbHelpers } from "../lib/supabase";
+import { createClient } from '@supabase/supabase-js';
+
+// Supabase configuration
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'YOUR_SUPABASE_URL';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
+
+// Create Supabase client
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [session, setSession] = useState(null);
+  const [token, setToken] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [householdId, setHouseholdId] = useState(null);
-
-  // Helper function to ensure user has household
-  const ensureUserHousehold = async (user) => {
-    if (!user) return null;
-    
-    try {
-      // First try to get existing household
-      const existingHouseholdId = await dbHelpers.getUserHouseholdId();
-      if (existingHouseholdId) {
-        return existingHouseholdId;
-      }
-      
-      // If no household exists, create one
-      console.log('No household found, creating one for user:', user.email);
-      const newHouseholdId = await dbHelpers.setupNewUser(user);
-      return newHouseholdId;
-    } catch (error) {
-      console.error('Error ensuring user household:', error);
-      return null;
-    }
-  };
 
   useEffect(() => {
-    // Get initial session
+    // Check for demo user first
+    const demoUser = localStorage.getItem('demo_user');
+    if (demoUser) {
+      try {
+        const parsed = JSON.parse(demoUser);
+        setUser(parsed);
+        setToken('demo-token');
+        setLoading(false);
+        return;
+      } catch (e) {
+        localStorage.removeItem('demo_user');
+      }
+    }
+
+    // Get initial session from Supabase
     const getInitialSession = async () => {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
-        
         if (error) {
           console.error('Error getting session:', error);
+        } else if (session) {
+          setUser(session.user);
+          setToken(session.access_token);
+          console.log('Initial session loaded:', session.user?.email);
         } else {
-          setSession(session);
-          setUser(session?.user ?? null);
-          
-          if (session?.user) {
-            // Ensure user has household
-            const userHouseholdId = await ensureUserHousehold(session.user);
-            setHouseholdId(userHouseholdId);
-          }
+          console.log('Initial session loaded: none');
         }
       } catch (error) {
-        console.error('Error in getInitialSession:', error);
+        console.error('Session check failed:', error);
       } finally {
         setLoading(false);
       }
@@ -58,80 +52,122 @@ export function AuthProvider({ children }) {
 
     getInitialSession();
 
-    // Listen for auth state changes
+    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
-        console.log('Auth state changed:', event, session?.user?.email);
+        console.log('Auth state changed:', event, session?.user?.email || 'no user');
         
-        setSession(session);
-        setUser(session?.user ?? null);
-        
-        if (session?.user) {
-          // Ensure user has household whenever they sign in
-          const userHouseholdId = await ensureUserHousehold(session.user);
-          setHouseholdId(userHouseholdId);
+        if (session) {
+          setUser(session.user);
+          setToken(session.access_token);
+          localStorage.removeItem('demo_user'); // Clear demo user if real auth happens
         } else {
-          setHouseholdId(null);
+          setUser(null);
+          setToken(null);
         }
-        
         setLoading(false);
       }
     );
 
-    return () => {
-      subscription?.unsubscribe();
-    };
+    return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (email, password, options = {}) => {
+  const signUp = async (email, password, budget, partnerEmail) => {
     try {
+      console.log('Attempting to sign up:', email);
       setLoading(true);
+
+      // First, try to sign up with Supabase Auth
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
         options: {
-          data: options.metadata || {}
+          emailRedirectTo: `${window.location.origin}/home`,
+          data: {
+            budget: budget,
+            partner_email: partnerEmail
+          }
         }
       });
 
-      if (error) throw error;
-
-      // If email confirmation is disabled and user is immediately available
-      if (data.user && data.user.email_confirmed_at) {
-        try {
-          const householdId = await dbHelpers.setupNewUser(data.user);
-          setHouseholdId(householdId);
-        } catch (setupError) {
-          console.error('Failed to setup user during signup:', setupError);
-          // Don't fail the signup, but the household setup will be retried on next login
-        }
+      if (error) {
+        console.log('Supabase auth error:', error);
+        throw new Error(error.message);
       }
 
-      return { data, error: null };
+      console.log('Sign up successful:', data);
+      
+      // If we have a user but no session, email confirmation is required
+      if (data.user && !data.session) {
+        return { 
+          user: data.user, 
+          requiresConfirmation: true,
+          message: 'Please check your email to confirm your account'
+        };
+      }
+
+      // If we have both user and session, create the user profile
+      if (data.user && data.session) {
+        await createUserProfile(data.user, { budget, partnerEmail });
+      }
+
+      return data;
     } catch (error) {
-      console.error('Sign up error:', error);
-      return { data: null, error };
+      console.log('Sign up failed:', error);
+      throw error;
     } finally {
       setLoading(false);
     }
   };
 
+  const createUserProfile = async (user, { budget, partnerEmail }) => {
+    try {
+      // Try to insert into your existing user_profiles table
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .insert({
+          auth_user_id: user.id,
+          email: user.email,
+          budget: budget || 0,
+          partner_email: partnerEmail
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.log('Profile creation error:', error);
+        // Don't throw here - auth user is created, we can handle profile later
+        return null;
+      }
+
+      console.log('Profile created:', data);
+      return data;
+    } catch (error) {
+      console.log('Profile creation failed:', error);
+      return null;
+    }
+  };
+
   const signIn = async (email, password) => {
     try {
+      console.log('Attempting to sign in:', email);
       setLoading(true);
+
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password
       });
 
-      if (error) throw error;
+      if (error) {
+        console.log('Sign in error:', error);
+        throw new Error(error.message);
+      }
 
-      // Household setup will be handled by the auth state change listener
-
-      return { data, error: null };
+      console.log('Sign in successful:', data);
+      return data;
     } catch (error) {
-      console.error('Sign in error:', error);
-      return { data: null, error };
+      console.log('Sign in failed:', error);
+      throw error;
     } finally {
       setLoading(false);
     }
@@ -139,80 +175,51 @@ export function AuthProvider({ children }) {
 
   const signOut = async () => {
     try {
-      setLoading(true);
-      const { error } = await supabase.auth.signOut();
+      console.log('Signing out...');
       
-      if (error) throw error;
+      // Clear demo user
+      localStorage.removeItem('demo_user');
       
-      // Clear local state
+      // Sign out from Supabase if not demo user
+      if (token !== 'demo-token') {
+        const { error } = await supabase.auth.signOut();
+        if (error) {
+          console.error('Sign out error:', error);
+          throw error;
+        }
+      }
+      
       setUser(null);
-      setSession(null);
-      setHouseholdId(null);
-      
-      return { error: null };
+      setToken(null);
     } catch (error) {
-      console.error('Sign out error:', error);
-      return { error };
-    } finally {
-      setLoading(false);
+      console.error('Sign out failed:', error);
+      throw error;
     }
   };
 
-  const resetPassword = async (email) => {
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`
-      });
-      
-      if (error) throw error;
-      
-      return { error: null };
-    } catch (error) {
-      console.error('Password reset error:', error);
-      return { error };
-    }
-  };
-
-  const updatePassword = async (password) => {
-    try {
-      const { error } = await supabase.auth.updateUser({ password });
-      
-      if (error) throw error;
-      
-      return { error: null };
-    } catch (error) {
-      console.error('Update password error:', error);
-      return { error };
-    }
-  };
-
-  const updateProfile = async (updates) => {
-    try {
-      const { error } = await supabase.auth.updateUser({
-        data: updates
-      });
-      
-      if (error) throw error;
-      
-      return { error: null };
-    } catch (error) {
-      console.error('Update profile error:', error);
-      return { error };
-    }
+  // Mock login for development (fallback)
+  const mockLogin = (mockToken = 'mock-token') => {
+    setUser({ 
+      id: 'mock-user', 
+      email: 'demo@example.com',
+      user_metadata: { full_name: 'Demo User' }
+    });
+    setToken(mockToken);
+    setLoading(false);
   };
 
   const value = {
     user,
-    session,
+    token,
     loading,
-    householdId,
+    isAuthed: !!user,
     isAuthenticated: !!user,
     signUp,
     signIn,
     signOut,
-    resetPassword,
-    updatePassword,
-    updateProfile
+    login: mockLogin, // Keep for compatibility
+    logout: signOut,
+    supabase // Expose supabase client for direct usage
   };
 
   return (
