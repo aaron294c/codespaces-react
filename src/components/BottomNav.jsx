@@ -1,32 +1,35 @@
-import React from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import React from "react";
+import { NavLink } from "react-router-dom";
 
-const tabs = [
-  { to: '/home', label: 'Home' },
-  { to: '/insights', label: 'Insights' },
-  { to: '/expense', label: '＋' },
-  { to: '/accounts', label: 'Accounts' },
-  { to: '/settings', label: 'Settings' },
-];
+const tab = ({ to, icon, label, exact }) => (
+  <NavLink
+    to={to}
+    end={exact}
+    className={({ isActive }) =>
+      `flex flex-col items-center justify-center gap-1 w-16 h-16 ${
+        isActive ? "text-blue-600 font-bold" : "text-gray-500"
+      }`
+    }
+  >
+    <span className="material-symbols-outlined text-2xl">{icon}</span>
+    <p className="text-xs">{label}</p>
+  </NavLink>
+);
 
 export default function BottomNav() {
-  const navigate = useNavigate();
-  const { pathname } = useLocation();
   return (
-    <nav className="bottom-nav" aria-label="Primary">
-      {tabs.map((t, i) => {
-        const active = pathname === t.to;
-        return (
-          <button
-            key={t.to}
-            onClick={() => navigate(t.to)}
-            className={`tab ${active ? 'active' : ''} ${i === 2 ? 'plus' : ''}`}
-            aria-label={t.label}
-          >
-            <span>{t.label}</span>
-          </button>
-        );
-      })}
-    </nav>
+    <footer className="sticky bottom-0 bg-white/95 backdrop-blur-md safe-area-bottom border-t border-gray-200/80">
+      <nav className="flex justify-around items-center h-16 px-4">
+        {tab({ to: "/home", icon: "home", label: "Home", exact: true })}
+        {tab({ to: "/insights", icon: "bar_chart", label: "Insights" })}
+        <NavLink to="/expense" className="w-16 h-16 flex items-center justify-center">
+          <span className="flex items-center justify-center size-14 bg-blue-600 text-white rounded-full shadow-lg">
+            <span className="material-symbols-outlined text-3xl">add</span>
+          </span>
+        </NavLink>
+        {tab({ to: "/accounts", icon: "credit_card", label: "Accounts" })}
+        {tab({ to: "/settings", icon: "settings", label: "Settings" })}
+      </nav>
+    </footer>
   );
 }

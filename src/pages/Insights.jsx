@@ -1,4 +1,3 @@
-cat > src/pages/Insights.jsx <<'EOF'
 import React from 'react';
 
 export default function Insights() {
@@ -8,10 +7,7 @@ export default function Insights() {
         {/* Header */}
         <header className="sticky top-0 z-20 bg-white/80 backdrop-blur-md">
           <div className="flex items-center p-4 pb-2 justify-between">
-            <button className="text-gray-800 flex size-10 shrink-0 items-center justify-center rounded-full" aria-label="Back">
-              <span className="material-symbols-outlined text-2xl">arrow_back_ios_new</span>
-            </button>
-            <h1 className="text-gray-900 text-lg font-bold leading-tight tracking-tight flex-1 text-center pr-10">
+            <h1 className="text-gray-900 text-lg font-bold leading-tight tracking-tight flex-1 text-center">
               Insights
             </h1>
           </div>
@@ -174,7 +170,7 @@ export default function Insights() {
           </section>
 
           {/* Quick Insights */}
-          <section className="mb-8" style={{ marginBottom: 32 }}>
+          <section className="mb-8">
             <h2 className="text-black text-[22px] font-bold tracking-[-0.4px] px-2 pb-3">Quick Insights</h2>
 
             <div className="space-y-4">
@@ -215,11 +211,7 @@ export default function Insights() {
             <div className="grid grid-cols-3 gap-4">
               <div className="flex flex-col items-center text-center p-3 rounded-[20px] bg-white clean-shadow transform transition-transform hover:scale-105">
                 <div className="relative mb-2">
-                  <img
-                    className="h-10 w-10"
-                    alt="Budget Master Badge"
-                    src="https://lh3.googleusercontent.com/aida-public/AB6AXuBabZ7OmFg_Q1oBOGj1w3UHbQFNkaSCt5a5v4xxbH-OwiYKFe0oCqGH4kdbWc9OCbcDnUXIta0Tt-XULUJo25vqIuO3u70lxyLgNLyu69rIoZ6DB9dsF4krLR_OCWZO33cY1QNrwmzhyuK4aOt7xNMGmwnJlH1HTGpnM69gcNCzjl_-STGkrpgmqg-OE4F25J0z3sOwMktZgnjdq72BgtAvmlwTGekmD9EO73YZSo9gHMUfH1o65CNMrBj2fWtAIoGVQhuWpw0sLe0"
-                  />
+                  <span className="material-symbols-outlined text-4xl text-yellow-500">emoji_events</span>
                 </div>
                 <p className="font-bold text-sm text-black leading-tight">Budget Master</p>
                 <p className="text-xs text-gray-500 mt-1">3 months in a row!</p>
@@ -242,7 +234,7 @@ export default function Insights() {
                 <p className="font-bold text-sm text-black leading-tight">Saving Streak</p>
                 <p className="text-xs text-gray-500 mt-1">Save $500 to unlock</p>
                 <div className="w-full bg-gray-200 rounded-full h-1 mt-2 overflow-hidden">
-                  <div className="bg-blue-500 h-1 rounded-full" style={{ width: '75%', maxWidth: '100%' }} />
+                  <div className="bg-blue-500 h-1 rounded-full w-3/4" />
                 </div>
               </div>
 
@@ -257,10 +249,8 @@ export default function Insights() {
           </section>
         </main>
 
-        {/* NOTE: do NOT add a footer here if your app already renders a persistent BottomNav via ProtectedLayout */}
         <div className="safe-area-bottom" />
       </div>
     </div>
   );
 }
-EOF
