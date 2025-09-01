@@ -1,13 +1,70 @@
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+# OVERWRITE src/index.css  (no HTML below this line!)
+cat > src/index.css <<'EOF'
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---- Globals / Variables ---- */
+:root {
+  --success-green: #30D158;
+  --warning-amber: #FF9F0A;
+  --destructive-red: #FF453A;
+
+  /* Insights chart colors */
+  --chart-color-1: #007AFF;
+  --chart-color-2: #34C759;
+  --chart-color-3: #FF9500;
+  --chart-color-4: #AF52DE;
+  --chart-color-5: #FF453A;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* Basic helpers copied from your design */
+.glassmorphism {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
+
+.active-nav-item { color: var(--destructive-red); }
+.nav-item:hover  { color: var(--destructive-red); }
+
+.btn-primary {
+  background-color: var(--destructive-red);
+  color: white;
+  transition: transform .2s ease, box-shadow .2s ease;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+}
+.btn-primary:active {
+  transform: scale(0.98);
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+.btn-secondary {
+  background-color: #F2F2F7;
+  color: #3C3C43;
+  transition: transform .2s ease, background-color .2s ease;
+}
+.btn-secondary:active {
+  transform: scale(0.98);
+  background-color: #E5E5EA;
+}
+
+.sf-symbol {
+  font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", system-ui;
+  font-weight: 300;
+  font-size: 1.5rem;
+  line-height: 1;
+}
+
+/* From your Insights HTML */
+.clean-shadow { box-shadow: 0 2px 16px rgba(0,0,0,0.06); }
+
+@keyframes donut-chart-animation {
+  from { stroke-dashoffset: 251.2; }
+}
+.animate-donut-chart {
+  animation: donut-chart-animation 1.5s ease-out forwards;
+}
+
+/* Safe area padding for iOS */
+.safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
+EOF

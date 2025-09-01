@@ -1,0 +1,227 @@
+/* src/components/BottomNav.css */
+.bottom-nav {
+  position: sticky;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+  z-index: 50;
+  /* Safe area for phones with home indicator */
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.bottom-nav-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  height: 80px;
+  max-width: 500px;
+  margin: 0 auto;
+  padding: 0 1rem;
+  position: relative;
+}
+
+.bottom-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  text-decoration: none;
+  color: #8e8e93;
+  transition: all 0.2s ease;
+  padding: 0.5rem;
+  border-radius: 0.75rem;
+  min-width: 60px;
+  position: relative;
+  /* Ensure tappable area is large enough for mobile */
+  min-height: 48px;
+}
+
+/* Regular nav items */
+.bottom-nav-item:not(.special) {
+  flex: 1;
+  max-width: 80px;
+}
+
+/* Special styling for the + button */
+.bottom-nav-item.special {
+  background: #007AFF;
+  color: white;
+  border-radius: 50%;
+  width: 56px;
+  height: 56px;
+  margin-top: -8px; /* Slightly elevated */
+  box-shadow: 0 4px 20px rgba(0, 122, 255, 0.3);
+  flex-direction: row; /* Center the + icon */
+  gap: 0;
+}
+
+.bottom-nav-item.special:hover {
+  background: #0056CC;
+  transform: scale(1.05);
+}
+
+.bottom-nav-item.special:active {
+  transform: scale(0.95);
+}
+
+.bottom-nav-item.special .bottom-nav-label {
+  display: none; /* Hide label for the special + button */
+}
+
+.bottom-nav-item.special .bottom-nav-icon {
+  font-size: 1.75rem;
+  font-weight: 300;
+}
+
+/* Active state for regular items */
+.bottom-nav-item.active:not(.special) {
+  color: #007AFF;
+}
+
+.bottom-nav-item.active:not(.special) .bottom-nav-icon {
+  transform: scale(1.1);
+}
+
+/* Hover states for regular items */
+.bottom-nav-item:not(.special):hover {
+  color: #007AFF;
+  background: rgba(0, 122, 255, 0.08);
+}
+
+/* Active/pressed states */
+.bottom-nav-item:not(.special):active {
+  transform: scale(0.95);
+  background: rgba(0, 122, 255, 0.15);
+}
+
+.bottom-nav-icon {
+  font-size: 1.5rem;
+  transition: transform 0.2s ease;
+  line-height: 1;
+  user-select: none;
+}
+
+.bottom-nav-label {
+  font-size: 0.6875rem; /* 11px */
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1;
+  text-align: center;
+  user-select: none;
+}
+
+/* Focus states for keyboard navigation */
+.bottom-nav-item:focus {
+  outline: 2px solid #007AFF;
+  outline-offset: 2px;
+}
+
+.bottom-nav-item:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* Animation for tab switches */
+.bottom-nav-item.active::before {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 20px;
+  height: 2px;
+  background: #007AFF;
+  border-radius: 1px;
+  animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+  from {
+    width: 0;
+    opacity: 0;
+  }
+  to {
+    width: 20px;
+    opacity: 1;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 380px) {
+  .bottom-nav-container {
+    padding: 0 0.5rem;
+  }
+  
+  .bottom-nav-item:not(.special) {
+    min-width: 50px;
+  }
+  
+  .bottom-nav-label {
+    font-size: 0.625rem; /* 10px for smaller screens */
+  }
+  
+  .bottom-nav-item.special {
+    width: 50px;
+    height: 50px;
+  }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+  .bottom-nav {
+    background: rgba(28, 28, 30, 0.95);
+    border-top-color: rgba(255, 255, 255, 0.08);
+  }
+  
+  .bottom-nav-item {
+    color: #8e8e93;
+  }
+  
+  .bottom-nav-item.active:not(.special) {
+    color: #0a84ff;
+  }
+  
+  .bottom-nav-item:not(.special):hover {
+    color: #0a84ff;
+    background: rgba(10, 132, 255, 0.08);
+  }
+  
+  .bottom-nav-item.special {
+    background: #0a84ff;
+  }
+  
+  .bottom-nav-item.special:hover {
+    background: #0056CC;
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .bottom-nav {
+    border-top-width: 2px;
+    border-top-color: #000;
+  }
+  
+  .bottom-nav-item.active:not(.special) {
+    background: rgba(0, 122, 255, 0.2);
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .bottom-nav-item {
+    transition: none;
+  }
+  
+  .bottom-nav-icon {
+    transition: none;
+  }
+  
+  .bottom-nav-item.active::before {
+    animation: none;
+  }
+}

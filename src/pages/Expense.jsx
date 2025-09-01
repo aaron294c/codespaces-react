@@ -1,3 +1,7 @@
+import React from 'react';
+export default function Expense() {
+  return <div className="screen"><h1>Add Expense</h1></div>;
+}
 <!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8"/>
