@@ -1,13 +1,18 @@
 // supabase/functions/webhook-listener/index.ts
-// COMPLETE INTEGRATION: Database notifications → Edge Function → External webhooks
+// DB Webhook -> Edge Function router -> (optional) external webhooks
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.38.0'
 
-interface WebhookEvent {
-  event: string
-  payload: any
-  timestamp: number
+type JSONValue = string | number | boolean | null | JSONValue[] | { [k: string]: JSONValue }
+
+interface QueueRecord {
+  id: string
+  event_name: string
+  payload: JSONValue | string
+  status?: string
+  attempts?: number
+  created_at?: string
 }
 
 interface WebhookConfig {
@@ -19,234 +24,156 @@ interface WebhookConfig {
   budget_threshold_pct: number
 }
 
+const supabase = createClient(
+  Deno.env.get('SUPABASE_URL') ?? '',
+  Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+)
+
 serve(async (req) => {
   try {
-    const config: WebhookConfig = {
-      big_spend_url: Deno.env.get('WEBHOOK_BIG_SPEND_URL'),
-      budget_threshold_url: Deno.env.get('WEBHOOK_BUDGET_THRESHOLD_URL'),
-      new_member_url: Deno.env.get('WEBHOOK_NEW_MEMBER_URL'),
-      shared_secret: Deno.env.get('WEBHOOK_SHARED_SECRET') || '',
-      big_spend_threshold: parseFloat(Deno.env.get('BIG_SPEND_THRESHOLD') || '150.00'),
-      budget_threshold_pct: parseFloat(Deno.env.get('BUDGET_THRESHOLD_PCT') || '0.8')
-    }
-
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    )
-
-    if (req.method === 'POST') {
-      // Handle direct webhook calls (from database triggers via Database Webhook)
-      return await handleDatabaseNotification(req, config)
-    }
-
+    // Allow simple health check & CORS preflight without secrets
     if (req.method === 'GET') {
-      // Return status page
-      return new Response(getStatusPage(), {
-        headers: { 'Content-Type': 'text/html' }
-      })
+      return new Response(getStatusPage(), { headers: { 'Content-Type': 'text/html' } })
+    }
+    if (req.method === 'OPTIONS') {
+      return new Response(null, { status: 204 })
+    }
+    if (req.method !== 'POST') {
+      return new Response('Method not allowed', { status: 405 })
     }
 
-    return new Response('Method not allowed', { status: 405 })
+    // Only enforce secret if you actually set one in Secrets.
+    const configuredSecret = Deno.env.get('WEBHOOK_SHARED_SECRET') ?? ''
+    if (configuredSecret) {
+      const incoming = req.headers.get('x-webhook-secret') ?? ''
+      if (incoming !== configuredSecret) {
+        return new Response('unauthorized', { status: 401 })
+      }
+    }
 
-  } catch (error) {
-    console.error('Edge function error:', error)
-    return new Response('Internal server error', { status: 500 })
+    const body = await req.json().catch(() => ({} as any))
+    // Two shapes supported:
+    // A) Database Webhook (table == 'webhook_queue', record/new contains row)
+    // B) Direct posts: { event, payload }
+
+    // --- A) From Database Webhook watching public.webhook_queue
+    if ((body?.table === 'webhook_queue' || body?.table === 'public.webhook_queue') && (body?.record || body?.new)) {
+      const rec = (body.record ?? body.new) as QueueRecord
+      await routeEvent(rec.event_name, coercePayload(rec.payload))
+      // Mark queue item as sent (or failed inside routeEvent try/catch)
+      const { error } = await supabase.rpc('mark_webhook_sent', { webhook_id: rec.id })
+      if (error) console.error('mark_webhook_sent error:', error)
+      return new Response('ok', { status: 200 })
+    }
+
+    // --- B) Direct posts (optional)
+    if (body?.event) {
+      await routeEvent(body.event, body.payload)
+      return new Response('ok', { status: 200 })
+    }
+
+    console.log('Unrecognized payload shape:', body)
+    return new Response('ok', { status: 200 })
+  } catch (err) {
+    console.error('Edge function error:', err)
+    return new Response('internal error', { status: 500 })
   }
 })
 
-async function handleDatabaseNotification(req: Request, config: WebhookConfig) {
+function getConfig(): WebhookConfig {
+  return {
+    big_spend_url: Deno.env.get('WEBHOOK_BIG_SPEND_URL') || undefined,
+    budget_threshold_url: Deno.env.get('WEBHOOK_BUDGET_THRESHOLD_URL') || undefined,
+    new_member_url: Deno.env.get('WEBHOOK_NEW_MEMBER_URL') || undefined,
+    shared_secret: Deno.env.get('WEBHOOK_SHARED_SECRET') ?? '',
+    big_spend_threshold: parseFloat(Deno.env.get('BIG_SPEND_THRESHOLD') || '150.00'),
+    budget_threshold_pct: parseFloat(Deno.env.get('BUDGET_THRESHOLD_PCT') || '0.8'),
+  }
+}
+
+function coercePayload(p: unknown): any {
+  if (typeof p === 'string') {
+    try { return JSON.parse(p) } catch { return { raw: p } }
+  }
+  return p
+}
+
+async function routeEvent(eventName: string, payload: any) {
+  const cfg = getConfig()
   try {
-    // Parse the notification from the database
-    const body = await req.json()
-    
-    // Handle different notification formats
-    let event: WebhookEvent
-    
-    if (body.type === 'INSERT' && body.table === 'webhook_queue') {
-      // From Database Webhook integration
-      event = JSON.parse(body.record.payload)
-    } else if (body.event) {
-      // Direct event format
-      event = body
-    } else {
-      console.log('Unknown notification format:', body)
-      return new Response('OK', { status: 200 })
-    }
-
-    console.log('Processing database notification:', event.event)
-
-    // Route to appropriate handler
-    switch (event.event) {
+    switch (eventName) {
       case 'big_spend':
-        await handleBigSpend(event.payload, config)
-        break
+        await handleBigSpend(payload, cfg); break
       case 'budget_threshold':
-        await handleBudgetThreshold(event.payload, config)
-        break
+        await handleBudgetThreshold(payload, cfg); break
       case 'new_member':
-        await handleNewMember(event.payload, config)
-        break
+        await handleNewMember(payload, cfg); break
       default:
-        console.log('Unknown event type:', event.event)
+        console.log('Unknown event:', eventName)
     }
-
-    return new Response('OK', { status: 200 })
-  } catch (error) {
-    console.error('Failed to handle notification:', error)
-    return new Response('Error processing notification', { status: 500 })
-  }
-}
-
-async function handleBigSpend(payload: any, config: WebhookConfig) {
-  console.log('Processing big spend alert:', payload)
-
-  const message = `Large expense of ${payload.currency}${payload.amount} at ${payload.merchant || 'Unknown merchant'}`
-
-  // Send to external webhook if configured
-  if (config.big_spend_url) {
-    await sendExternalWebhook(config.big_spend_url, {
-      type: 'big_spend_alert',
-      message,
-      amount: payload.amount,
-      currency: payload.currency,
-      merchant: payload.merchant,
-      household_id: payload.household_id,
-      transaction_id: payload.transaction_id,
-      category_id: payload.category_id,
-      created_by: payload.created_by,
-      occurred_at: payload.occurred_at
-    }, config.shared_secret)
-  }
-
-  // Additional integrations could go here:
-  // - Send push notification
-  // - Send email alert
-  // - Post to Slack/Discord
-  // - Log to analytics service
-}
-
-async function handleBudgetThreshold(payload: any, config: WebhookConfig) {
-  console.log('Processing budget threshold alert:', payload)
-
-  const pctFormatted = Math.round(payload.pct * 100)
-  const message = `Budget ${pctFormatted}% used for ${payload.period}`
-  
-  if (config.budget_threshold_url) {
-    await sendExternalWebhook(config.budget_threshold_url, {
-      type: 'budget_threshold_alert',
-      message,
-      category_id: payload.category_id,
-      period: payload.period,
-      spent: payload.spent,
-      budget: payload.budget,
-      percentage: payload.pct,
-      threshold_pct: payload.threshold_pct,
-      household_id: payload.household_id
-    }, config.shared_secret)
-  }
-}
-
-async function handleNewMember(payload: any, config: WebhookConfig) {
-  console.log('Processing new member notification:', payload)
-
-  const message = `New ${payload.role} joined the household`
-
-  if (config.new_member_url) {
-    await sendExternalWebhook(config.new_member_url, {
-      type: 'new_member_joined',
-      message,
-      user_id: payload.user_id,
-      role: payload.role,
-      household_id: payload.household_id,
-      joined_at: payload.joined_at
-    }, config.shared_secret)
-  }
-}
-
-async function sendExternalWebhook(url: string, payload: any, secret: string) {
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Webhook-Secret': secret,
-        'User-Agent': 'Supabase-ExpenseApp/1.0'
-      },
-      body: JSON.stringify({
-        timestamp: Date.now(),
-        source: 'expense_tracker',
-        data: payload
-      })
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error')
-      console.error(`Webhook failed: ${response.status} ${response.statusText} - ${errorText}`)
-      throw new Error(`HTTP ${response.status}`)
-    } else {
-      console.log(`Webhook sent successfully to ${url}`)
+  } catch (err) {
+    console.error(`Handler for ${eventName} failed:`, err)
+    // If this came via queue, mark as failed so your retry loop can pick it up
+    if (payload?.id) {
+      const { error } = await supabase.rpc('mark_webhook_failed', { webhook_id: payload.id })
+      if (error) console.error('mark_webhook_failed error:', error)
     }
-  } catch (error) {
-    console.error('Webhook send error:', error)
-    // Could implement retry logic here or queue for later retry
+    throw err
+  }
+}
+
+async function handleBigSpend(payload: any, cfg: WebhookConfig) {
+  console.log('big_spend:', payload)
+  if (cfg.big_spend_url) {
+    await sendExternalWebhook(cfg.big_spend_url, { type: 'big_spend_alert', ...payload }, cfg.shared_secret)
+  }
+}
+
+async function handleBudgetThreshold(payload: any, cfg: WebhookConfig) {
+  console.log('budget_threshold:', payload)
+  if (cfg.budget_threshold_url) {
+    await sendExternalWebhook(cfg.budget_threshold_url, { type: 'budget_threshold_alert', ...payload }, cfg.shared_secret)
+  }
+}
+
+async function handleNewMember(payload: any, cfg: WebhookConfig) {
+  console.log('new_member:', payload)
+  if (cfg.new_member_url) {
+    await sendExternalWebhook(cfg.new_member_url, { type: 'new_member_joined', ...payload }, cfg.shared_secret)
+  }
+}
+
+async function sendExternalWebhook(url: string, data: any, secret: string) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Webhook-Secret': secret,
+      'User-Agent': 'Supabase-ExpenseApp/1.0',
+    },
+    body: JSON.stringify({ timestamp: Date.now(), source: 'expense_tracker', data }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`External webhook failed ${res.status}: ${text}`)
   }
 }
 
 function getStatusPage() {
   return `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Expense Tracker Webhook Listener</title>
-      <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
-        .status { color: green; font-weight: bold; }
-        .config { background: #f5f5f5; padding: 15px; margin: 20px 0; border-radius: 5px; }
-        pre { background: #f0f0f0; padding: 10px; overflow-x: auto; }
-      </style>
-    </head>
-    <body>
-      <h1>Expense Tracker Webhook Listener</h1>
-      <p class="status">✅ Service is running</p>
-      
-      <div class="config">
-        <h3>Configuration:</h3>
-        <ul>
-          <li>Big Spend URL: ${Deno.env.get('WEBHOOK_BIG_SPEND_URL') ? '✅ Configured' : '❌ Not set'}</li>
-          <li>Budget Threshold URL: ${Deno.env.get('WEBHOOK_BUDGET_THRESHOLD_URL') ? '✅ Configured' : '❌ Not set'}</li>
-          <li>New Member URL: ${Deno.env.get('WEBHOOK_NEW_MEMBER_URL') ? '✅ Configured' : '❌ Not set'}</li>
-          <li>Shared Secret: ${Deno.env.get('WEBHOOK_SHARED_SECRET') ? '✅ Set' : '❌ Not set'}</li>
-          <li>Big Spend Threshold: $${Deno.env.get('BIG_SPEND_THRESHOLD') || '150.00'}</li>
-          <li>Budget Threshold: ${(parseFloat(Deno.env.get('BUDGET_THRESHOLD_PCT') || '0.8') * 100)}%</li>
-        </ul>
-      </div>
-
-      <h3>Supported Events:</h3>
-      <ul>
-        <li><code>big_spend</code> - Triggered when expenses exceed threshold</li>
-        <li><code>budget_threshold</code> - Triggered when budget usage exceeds percentage</li>
-        <li><code>new_member</code> - Triggered when someone joins a household</li>
-      </ul>
-
-      <h3>Usage:</h3>
-      <p>POST webhook events to this endpoint to trigger external integrations.</p>
-      
-      <h3>Example Payload:</h3>
-      <pre>{
-  "event": "big_spend",
-  "timestamp": ${Date.now()},
-  "payload": {
-    "household_id": "uuid",
-    "transaction_id": "uuid",
-    "amount": 175.50,
-    "currency": "USD",
-    "merchant": "Expensive Restaurant",
-    "category_id": "uuid",
-    "created_by": "uuid"
-  }
-}</pre>
-    </body>
-    </html>
-  `
+<!doctype html><html><head><meta charset="utf-8"><title>Webhook Listener</title>
+<style>body{font-family:ui-sans-serif,system-ui;margin:40px}code{background:#f5f5f5;padding:2px 6px;border-radius:4px}</style></head>
+<body>
+  <h1>Expense Tracker Webhook Listener</h1>
+  <p>✅ Running</p>
+  <ul>
+    <li>Big Spend URL: ${Deno.env.get('WEBHOOK_BIG_SPEND_URL') ? '✅' : '❌'}</li>
+    <li>Budget Threshold URL: ${Deno.env.get('WEBHOOK_BUDGET_THRESHOLD_URL') ? '✅' : '❌'}</li>
+    <li>New Member URL: ${Deno.env.get('WEBHOOK_NEW_MEMBER_URL') ? '✅' : '❌'}</li>
+    <li>Secret set: ${Deno.env.get('WEBHOOK_SHARED_SECRET') ? '✅' : '❌'}</li>
+  </ul>
+  <p>If you use Database Webhooks → “HTTP Request”, set header <code>x-webhook-secret</code>
+     to match <code>WEBHOOK_SHARED_SECRET</code>. If you use “Supabase Edge Functions” type,
+     you can leave <code>WEBHOOK_SHARED_SECRET</code> empty to skip the header check.</p>
+</body></html>`
 }
