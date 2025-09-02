@@ -1,469 +1,298 @@
-// src/pages/Expense.jsx
-import React, { useEffect, useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { dbHelpers } from "../lib/supabase";
-
-const LoadingSpinner = () => (
-  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto" />
-);
+import { dbHelpers, formatMoney } from "../lib/dbHelpers";
+import toast from 'react-hot-toast';
 
 export default function Expense() {
+  const { householdId } = useAuth();
   const navigate = useNavigate();
-  const { user, householdId } = useAuth();
 
-  const [formData, setFormData] = useState({
-    amount: "",
-    categoryId: "",
-    accountId: "",
-    merchant: "",
-    note: "",
-    occurredAt: new Date().toISOString().split("T")[0],
-  });
-
+  const [loading, setLoading] = useState(false);
   const [categories, setCategories] = useState([]);
   const [accounts, setAccounts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState(false);
-
-  const [showCategoryModal, setShowCategoryModal] = useState(false);
-  const [newCategoryName, setNewCategoryName] = useState("");
+  const [formData, setFormData] = useState({
+    amount: '',
+    merchant: '',
+    note: '',
+    categoryId: '',
+    accountId: '',
+    occurredAt: new Date().toISOString().split('T')[0] // Today's date
+  });
 
   const quickAmounts = [5, 10, 25, 50, 100];
 
+  // Load reference data
   useEffect(() => {
-    const fetchData = async () => {
+    const loadReferenceData = async () => {
       if (!householdId) return;
+
       try {
-        setLoading(true);
         const [categoriesData, accountsData] = await Promise.all([
           dbHelpers.getCategories(householdId),
-          dbHelpers.getAccounts(householdId),
+          dbHelpers.getAccounts(householdId)
         ]);
 
-        const expenseCats = categoriesData.filter((c) => c.kind === "expense");
-        setCategories(expenseCats);
+        // Filter for expense categories
+        const expenseCategories = categoriesData.filter(cat => cat.kind === 'expense');
+        setCategories(expenseCategories);
         setAccounts(accountsData);
 
-        // Defaults
-        setFormData((prev) => ({
-          ...prev,
-          accountId: prev.accountId || accountsData[0]?.account_id || "",
-          categoryId: prev.categoryId || expenseCats[0]?.id || "",
-        }));
-      } catch (e) {
-        console.error(e);
-        setError("Failed to load form data. Please try again.");
-      } finally {
-        setLoading(false);
+        // Auto-select first account if available
+        if (accountsData.length > 0 && !formData.accountId) {
+          setFormData(prev => ({ ...prev, accountId: accountsData[0].account_id }));
+        }
+      } catch (error) {
+        console.error('Error loading reference data:', error);
+        toast.error('Failed to load data');
       }
     };
 
-    fetchData();
+    loadReferenceData();
   }, [householdId]);
-
-  const handleAmountChange = (raw) => {
-    // allow only digits and a single dot, max 2 dp
-    const clean = raw.replace(/[^0-9.]/g, "");
-    const parts = clean.split(".");
-    if (parts.length > 2) return;
-    if (parts[1] && parts[1].length > 2) return;
-    setFormData((p) => ({ ...p, amount: clean }));
-    setError("");
-  };
-
-  const handleQuickAmount = (amt) => {
-    setFormData((p) => ({ ...p, amount: String(amt) }));
-    setError("");
-  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
-    setFormData((p) => ({ ...p, [name]: value }));
-    setError("");
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleCreateCategory = async () => {
-    if (!newCategoryName.trim()) return;
-    try {
-      const palette = [
-        "#3B82F6",
-        "#10B981",
-        "#F59E0B",
-        "#EF4444",
-        "#8B5CF6",
-        "#F97316",
-        "#06B6D4",
-        "#84CC16",
-      ];
-      const color = palette[categories.length % palette.length];
+  const handleQuickAmount = (amount) => {
+    setFormData(prev => ({ ...prev, amount: amount.toString() }));
+  };
 
-      const newCat = await dbHelpers.insertCategory({
-        household_id: householdId,
-        name: newCategoryName.trim(),
-        color,
-        kind: "expense",
-      });
+  const handleCategorySelect = (categoryId) => {
+    setFormData(prev => ({ ...prev, categoryId }));
+  };
 
-      setCategories((prev) => [...prev, newCat]);
-      setFormData((p) => ({ ...p, categoryId: newCat.id }));
-      setNewCategoryName("");
-      setShowCategoryModal(false);
-    } catch (e) {
-      console.error(e);
-      setError("Failed to create category. Please try again.");
+  const validateForm = () => {
+    const amount = parseFloat(formData.amount);
+    
+    if (!amount || amount <= 0) {
+      toast.error('Please enter a valid amount');
+      return false;
     }
+
+    if (!formData.categoryId) {
+      toast.error('Please select a category');
+      return false;
+    }
+
+    if (!formData.accountId) {
+      toast.error('Please select an account');
+      return false;
+    }
+
+    if (!formData.occurredAt) {
+      toast.error('Please select a date');
+      return false;
+    }
+
+    return true;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setSubmitting(true);
-    setError("");
+    
+    if (!validateForm()) return;
 
+    setLoading(true);
+    
     try {
-      if (!formData.amount || parseFloat(formData.amount) <= 0) {
-        throw new Error("Please enter a valid amount.");
-      }
-      if (!formData.categoryId) throw new Error("Please select a category.");
-      if (!formData.accountId) throw new Error("Please select an account.");
-
-      const tx = {
+      const transactionData = {
         household_id: householdId,
         account_id: formData.accountId,
         category_id: formData.categoryId,
-        created_by: user.id,
-        direction: "outflow",
+        direction: 'outflow',
         amount: parseFloat(formData.amount),
-        currency: "USD",
+        currency: 'USD',
         merchant: formData.merchant.trim() || null,
         note: formData.note.trim() || null,
-        occurred_at: new Date(formData.occurredAt + "T12:00:00").toISOString(),
+        occurred_at: formData.occurredAt
       };
 
-      await dbHelpers.insertTransaction(tx);
-      setSuccess(true);
-
-      setTimeout(() => {
-        setFormData({
-          amount: "",
-          categoryId: categories[0]?.id || "",
-          accountId: accounts[0]?.account_id || "",
-          merchant: "",
-          note: "",
-          occurredAt: new Date().toISOString().split("T")[0],
-        });
-        setSuccess(false);
-        navigate("/dashboard");
-      }, 1200);
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "Failed to add expense. Please try again.");
+      await dbHelpers.insertTransaction(transactionData);
+      
+      toast.success('Expense added successfully!');
+      navigate('/dashboard');
+    } catch (error) {
+      console.error('Error adding expense:', error);
+      toast.error('Failed to add expense. Please try again.');
     } finally {
-      setSubmitting(false);
+      setLoading(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="bg-gray-200 min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4" />
-          <p className="text-gray-600">Loading…</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (success) {
-    return (
-      <div className="bg-gray-200 min-h-screen flex items-center justify-center">
-        <div className="bg-white rounded-3xl p-8 text-center shadow-xl">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <span className="material-symbols-outlined text-green-600 text-2xl">
-              check_circle
-            </span>
-          </div>
-          <h2 className="text-2xl font-bold text-gray-900 mb-2">
-            Expense Added!
-          </h2>
-          <p className="text-gray-600">Your transaction has been saved.</p>
-        </div>
-      </div>
-    );
-  }
+  const handleClose = () => {
+    navigate('/dashboard');
+  };
 
   return (
-    <div className="bg-gray-200 min-h-screen">
-      <div className="relative flex size-full min-h-screen flex-col justify-end bg-black/30">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center z-50">
+      <div className="w-full max-w-md bg-white rounded-t-3xl shadow-xl transform transition-transform duration-300 animate-slide-up">
+        {/* Handle */}
+        <div className="flex justify-center py-3">
+          <div className="w-10 h-1 bg-gray-300 rounded-full"></div>
+        </div>
+
         {/* Header */}
-        <div className="absolute top-0 left-0 right-0 p-4 z-20">
+        <div className="px-6 pb-4">
           <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-gray-900">Add Expense</h2>
             <button
-              onClick={() => navigate("/dashboard")}
-              className="p-2 text-white/80 hover:text-white"
+              onClick={handleClose}
+              className="p-2 text-gray-500 hover:text-gray-700 rounded-full hover:bg-gray-100"
             >
               <span className="material-symbols-outlined">close</span>
             </button>
-            <h1 className="text-white font-semibold">Add Expense</h1>
-            <div className="w-10" />
           </div>
         </div>
 
-        {/* Sheet */}
-        <div className="relative flex flex-col rounded-t-[28px] bg-white pb-6 pt-4 shadow-xl animate-[slide-up_0.5s_cubic-bezier(0.16,1,0.3,1)_forwards] max-h-[90vh] overflow-y-auto">
-          <div className="flex h-5 w-full items-center justify-center mb-4">
-            <div className="h-1.5 w-10 rounded-full bg-gray-300" />
-          </div>
-
-          <form onSubmit={handleSubmit} className="flex-1 px-4">
-            {/* Amount */}
-            <div className="px-2 mb-6">
-              <div className="relative flex items-center justify-center">
-                <span className="text-4xl font-light text-gray-400 self-start pt-1.5 pr-1">
-                  $
-                </span>
-                <input
-                  className="h-auto w-full border-none bg-transparent p-0 text-center text-[56px] font-light text-black placeholder:text-gray-400 focus:outline-none focus:ring-0"
-                  placeholder="0.00"
-                  type="text"
-                  value={formData.amount}
-                  onChange={(e) => handleAmountChange(e.target.value)}
-                  inputMode="decimal"
-                />
-              </div>
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="px-6 pb-6 space-y-6">
+          {/* Amount */}
+          <div className="text-center">
+            <div className="flex items-center justify-center mb-4">
+              <span className="text-4xl text-gray-400">$</span>
+              <input
+                type="number"
+                name="amount"
+                value={formData.amount}
+                onChange={handleInputChange}
+                className="text-5xl font-light text-gray-900 bg-transparent border-none focus:outline-none text-center w-full max-w-xs"
+                placeholder="0"
+                min="0"
+                step="0.01"
+              />
             </div>
 
-            {/* Quick amounts */}
-            <div className="flex items-center justify-center gap-2 mb-6">
-              {quickAmounts.map((amt) => (
+            {/* Quick Amounts */}
+            <div className="flex justify-center gap-2 mb-6">
+              {quickAmounts.map((amount) => (
                 <button
-                  key={amt}
+                  key={amount}
                   type="button"
-                  onClick={() => handleQuickAmount(amt)}
-                  className="rounded-full bg-gray-100 px-4 py-2 text-sm font-semibold text-black transition-transform hover:scale-105 active:scale-95 hover:bg-gray-200"
+                  onClick={() => handleQuickAmount(amount)}
+                  className="px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-full text-sm font-medium text-gray-700 transition-colors"
                 >
-                  ${amt}
+                  ${amount}
                 </button>
               ))}
             </div>
+          </div>
 
-            {/* Merchant */}
-            <div className="px-2 mb-6">
-              <input
-                name="merchant"
-                value={formData.merchant}
-                onChange={handleInputChange}
-                className="w-full rounded-xl border-none bg-gray-100 py-3.5 px-4 text-base text-black placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-600"
-                placeholder="Merchant (e.g., Starbucks)"
-                type="text"
-              />
-            </div>
-
-            {/* Note */}
-            <div className="px-2 mb-6">
-              <input
-                name="note"
-                value={formData.note}
-                onChange={handleInputChange}
-                className="w-full rounded-xl border-none bg-gray-100 py-3.5 px-4 text-base text-black placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-600"
-                placeholder="Note (optional)"
-                type="text"
-              />
-            </div>
-
-            {/* Date */}
-            <div className="px-2 mb-6">
-              <input
-                name="occurredAt"
-                value={formData.occurredAt}
-                onChange={handleInputChange}
-                className="w-full rounded-xl border-none bg-gray-100 py-3.5 px-4 text-base text-black focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-600"
-                type="date"
-              />
-            </div>
-
-            {/* Categories */}
-            <div className="px-2 mb-6">
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-base font-semibold tracking-tight text-gray-500 uppercase">
-                  Categories
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setShowCategoryModal(true)}
-                  className="text-blue-600 text-sm font-medium hover:underline"
-                >
-                  Add New
-                </button>
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                {categories.map((category) => {
-                  const selected = formData.categoryId === category.id;
-                  return (
-                    <button
-                      key={category.id}
-                      type="button"
-                      onClick={() =>
-                        setFormData((p) => ({ ...p, categoryId: category.id }))
-                      }
-                      className={`flex h-[88px] flex-col items-center justify-center gap-y-2 rounded-2xl transition-transform hover:scale-105 active:scale-95 focus:outline-none ${
-                        selected ? "ring-2 ring-blue-600" : ""
-                      }`}
-                      style={{
-                        backgroundColor: selected
-                          ? `${category.color}20`
-                          : "#F3F4F6",
-                        color: selected ? category.color : "#6B7280",
-                      }}
-                    >
-                      <span className="material-symbols-outlined text-2xl">
-                        {getCategoryIcon(category.name)}
-                      </span>
-                      <p className="text-xs font-medium px-1 text-center leading-tight">
-                        {category.name}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Accounts (if > 1) */}
-            {accounts.length > 1 && (
-              <div className="px-2 mb-6">
-                <h3 className="text-base font-semibold tracking-tight text-gray-500 uppercase mb-4">
-                  Account
-                </h3>
-                <div className="space-y-2">
-                  {accounts.map((account) => {
-                    const selected = formData.accountId === account.account_id;
-                    return (
-                      <button
-                        key={account.account_id}
-                        type="button"
-                        onClick={() =>
-                          setFormData((p) => ({
-                            ...p,
-                            accountId: account.account_id,
-                          }))
-                        }
-                        className={`w-full flex items-center gap-4 p-3 rounded-xl transition-colors ${
-                          selected
-                            ? "bg-blue-100 ring-2 ring-blue-600"
-                            : "bg-gray-100 hover:bg-gray-200"
-                        }`}
-                      >
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-white">
-                          <span className="material-symbols-outlined text-gray-600">
-                            {getAccountIcon(account.account_type)}
-                          </span>
-                        </div>
-                        <div className="flex-1 text-left">
-                          <p className="font-semibold text-gray-900">
-                            {account.account_name}
-                          </p>
-                          <p className="text-sm text-gray-500">
-                            ${account.current_balance.toFixed(2)}
-                          </p>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Error */}
-            {error && (
-              <div className="px-2 mb-4">
-                <div className="bg-red-50 border border-red-200 text-red-800 px-4 py-3 rounded-xl">
-                  {error}
-                </div>
-              </div>
-            )}
-
-            {/* Submit */}
-            <div className="px-2 pb-2">
-              <button
-                type="submit"
-                disabled={
-                  submitting ||
-                  !formData.amount ||
-                  !formData.categoryId ||
-                  !formData.accountId
-                }
-                className="flex w-full items-center justify-center rounded-full bg-blue-600 py-4 text-lg font-bold text-white shadow-lg transition-all hover:bg-blue-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {submitting ? <LoadingSpinner /> : "Add Expense"}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      {/* New Category Modal */}
-      {showCategoryModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm">
-            <h3 className="text-xl font-semibold mb-4">Create New Category</h3>
+          {/* Merchant */}
+          <div>
             <input
               type="text"
-              value={newCategoryName}
-              onChange={(e) => setNewCategoryName(e.target.value)}
-              placeholder="Category name"
-              className="w-full px-4 py-3 border border-gray-300 rounded-xl mb-4 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              autoFocus
+              name="merchant"
+              value={formData.merchant}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Where did you spend? (optional)"
             />
-            <div className="flex gap-2">
-              <button
-                onClick={() => {
-                  setShowCategoryModal(false);
-                  setNewCategoryName("");
-                }}
-                className="flex-1 py-3 px-4 border border-gray-300 text-gray-700 rounded-xl hover:bg-gray-50"
+          </div>
+
+          {/* Note */}
+          <div>
+            <input
+              type="text"
+              name="note"
+              value={formData.note}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="Add a note (optional)"
+            />
+          </div>
+
+          {/* Date */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Date
+            </label>
+            <input
+              type="date"
+              name="occurredAt"
+              value={formData.occurredAt}
+              onChange={handleInputChange}
+              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+
+          {/* Account Selection */}
+          {accounts.length > 1 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Account
+              </label>
+              <select
+                name="accountId"
+                value={formData.accountId}
+                onChange={handleInputChange}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
               >
-                Cancel
-              </button>
-              <button
-                onClick={handleCreateCategory}
-                disabled={!newCategoryName.trim()}
-                className="flex-1 py-3 px-4 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Create
-              </button>
+                {accounts.map((account) => (
+                  <option key={account.account_id} value={account.account_id}>
+                    {account.account_name} ({formatMoney(account.current_balance)})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Categories */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Category
+            </label>
+            <div className="grid grid-cols-3 gap-3">
+              {categories.map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  onClick={() => handleCategorySelect(category.id)}
+                  className={`p-4 rounded-xl border-2 transition-all ${
+                    formData.categoryId === category.id
+                      ? 'border-blue-500 bg-blue-50'
+                      : 'border-gray-200 hover:border-gray-300 bg-white'
+                  }`}
+                >
+                  <div className="flex flex-col items-center gap-2">
+                    <div 
+                      className="w-8 h-8 rounded-full flex items-center justify-center text-white"
+                      style={{ backgroundColor: category.color }}
+                    >
+                      <span className="material-symbols-outlined text-lg">
+                        {category.icon || 'category'}
+                      </span>
+                    </div>
+                    <span className="text-xs font-medium text-gray-700 text-center">
+                      {category.name}
+                    </span>
+                  </div>
+                </button>
+              ))}
             </div>
           </div>
-        </div>
-      )}
+
+          {/* Submit Button */}
+          <div className="pt-4">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-xl transition-colors"
+            >
+              {loading ? (
+                <div className="flex items-center justify-center">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                  Adding Expense...
+                </div>
+              ) : (
+                'Add Expense'
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
-}
-
-/* Helpers */
-function getCategoryIcon(name) {
-  const map = {
-    Groceries: "shopping_cart",
-    "Dining Out": "restaurant",
-    Transportation: "directions_car",
-    Utilities: "lightbulb",
-    Entertainment: "movie",
-    Shopping: "shopping_bag",
-    Healthcare: "local_hospital",
-    "Rent/Mortgage": "home",
-    Bills: "receipt_long",
-  };
-  return map[name] || "category";
-}
-
-function getAccountIcon(type) {
-  const map = {
-    checking: "account_balance",
-    savings: "savings",
-    credit_card: "credit_card",
-    investment: "trending_up",
-  };
-  return map[type] || "payments";
 }
