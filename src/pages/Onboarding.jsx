@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { dbHelpers } from "../lib/dbHelpers";
+import { supabase } from "../lib/supabase";
 import toast from 'react-hot-toast';
 
 export default function Onboarding() {
@@ -33,13 +34,50 @@ export default function Onboarding() {
     setLoading(true);
     
     try {
+      console.log('Creating household with name:', formData.householdName.trim());
+      
+      // Check if user is authenticated
+      const { data: { user }, error: userError } = await supabase.auth.getUser();
+      if (userError || !user) {
+        throw new Error('Not authenticated. Please sign in first.');
+      }
+      
+      console.log('User authenticated:', user.id);
+      
+      // Create household
       const household = await dbHelpers.createHousehold(formData.householdName.trim());
+      console.log('Household created:', household);
+      
+      // Add user as a member
+      const { error: memberError } = await supabase
+        .from('household_members')
+        .insert({
+          household_id: household.id,
+          user_id: user.id,
+          role: 'owner'
+        });
+      
+      if (memberError) {
+        console.error('Error adding user as member:', memberError);
+        // Don't throw error if user is already a member
+        if (!memberError.message.includes('duplicate key')) {
+          throw memberError;
+        }
+      }
+      
+      console.log('User added as household member');
       
       // Create default categories and account
-      await Promise.all([
-        dbHelpers.createDefaultCategories(household.id),
-        dbHelpers.createDefaultAccount(household.id)
-      ]);
+      try {
+        await Promise.all([
+          dbHelpers.createDefaultCategories(household.id),
+          dbHelpers.createDefaultAccount(household.id)
+        ]);
+        console.log('Default data created');
+      } catch (defaultError) {
+        console.warn('Error creating default data:', defaultError);
+        // Don't fail the whole process if defaults fail
+      }
       
       // Refresh household context
       await refreshHousehold();
@@ -48,7 +86,7 @@ export default function Onboarding() {
       navigate('/dashboard', { replace: true });
     } catch (error) {
       console.error('Error creating household:', error);
-      toast.error('Failed to create household. Please try again.');
+      toast.error('Failed to create household: ' + error.message);
     } finally {
       setLoading(false);
     }
@@ -74,7 +112,13 @@ export default function Onboarding() {
       navigate('/dashboard', { replace: true });
     } catch (error) {
       console.error('Error joining household:', error);
-      toast.error('Failed to join household. Please check the household ID.');
+      if (error.message?.includes('duplicate key')) {
+        toast.error('You are already a member of this household');
+      } else if (error.message?.includes('foreign key')) {
+        toast.error('Household not found. Please check the ID and try again.');
+      } else {
+        toast.error('Failed to join household: ' + error.message);
+      }
     } finally {
       setLoading(false);
     }

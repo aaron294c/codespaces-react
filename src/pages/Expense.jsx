@@ -1,16 +1,17 @@
+// src/pages/Expense.jsx - Updated to use centralized data context
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { dbHelpers, formatMoney } from "../lib/dbHelpers";
+import { useData } from "../context/DataContext";
+import { formatMoney } from "../lib/dbHelpers";
 import toast from 'react-hot-toast';
 
 export default function Expense() {
   const { householdId } = useAuth();
   const navigate = useNavigate();
+  const { categories, accounts, addTransaction, loading: dataLoading } = useData();
 
   const [loading, setLoading] = useState(false);
-  const [categories, setCategories] = useState([]);
-  const [accounts, setAccounts] = useState([]);
   const [formData, setFormData] = useState({
     amount: '',
     merchant: '',
@@ -22,34 +23,12 @@ export default function Expense() {
 
   const quickAmounts = [5, 10, 25, 50, 100];
 
-  // Load reference data
+  // Auto-select first account if available
   useEffect(() => {
-    const loadReferenceData = async () => {
-      if (!householdId) return;
-
-      try {
-        const [categoriesData, accountsData] = await Promise.all([
-          dbHelpers.getCategories(householdId),
-          dbHelpers.getAccounts(householdId)
-        ]);
-
-        // Filter for expense categories
-        const expenseCategories = categoriesData.filter(cat => cat.kind === 'expense');
-        setCategories(expenseCategories);
-        setAccounts(accountsData);
-
-        // Auto-select first account if available
-        if (accountsData.length > 0 && !formData.accountId) {
-          setFormData(prev => ({ ...prev, accountId: accountsData[0].account_id }));
-        }
-      } catch (error) {
-        console.error('Error loading reference data:', error);
-        toast.error('Failed to load data');
-      }
-    };
-
-    loadReferenceData();
-  }, [householdId]);
+    if (accounts.length > 0 && !formData.accountId) {
+      setFormData(prev => ({ ...prev, accountId: accounts[0].account_id }));
+    }
+  }, [accounts, formData.accountId]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -110,13 +89,37 @@ export default function Expense() {
         occurred_at: formData.occurredAt
       };
 
-      await dbHelpers.insertTransaction(transactionData);
+      console.log('➕ Adding transaction:', transactionData);
+
+      // Use the centralized addTransaction method which will automatically refresh all data
+      await addTransaction(transactionData);
       
-      toast.success('Expense added successfully!');
-      navigate('/dashboard');
+      toast.success('Expense added successfully!', {
+        icon: '✅',
+        duration: 3000
+      });
+      
+      // Reset form
+      setFormData({
+        amount: '',
+        merchant: '',
+        note: '',
+        categoryId: '',
+        accountId: accounts[0]?.account_id || '',
+        occurredAt: new Date().toISOString().split('T')[0]
+      });
+      
+      // Navigate back after a short delay to show the success message
+      setTimeout(() => {
+        navigate('/dashboard');
+      }, 1000);
+      
     } catch (error) {
-      console.error('Error adding expense:', error);
-      toast.error('Failed to add expense. Please try again.');
+      console.error('❌ Error adding expense:', error);
+      toast.error('Failed to add expense. Please try again.', {
+        icon: '❌',
+        duration: 5000
+      });
     } finally {
       setLoading(false);
     }
@@ -125,6 +128,20 @@ export default function Expense() {
   const handleClose = () => {
     navigate('/dashboard');
   };
+
+  // Filter expense categories
+  const expenseCategories = categories.filter(cat => cat.kind === 'expense');
+
+  if (dataLoading && !categories.length) {
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+        <div className="bg-white rounded-2xl p-6 text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+          <p className="text-gray-600">Loading categories...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-end justify-center z-50">
@@ -162,6 +179,7 @@ export default function Expense() {
                 placeholder="0"
                 min="0"
                 step="0.01"
+                autoFocus
               />
             </div>
 
@@ -172,7 +190,11 @@ export default function Expense() {
                   key={amount}
                   type="button"
                   onClick={() => handleQuickAmount(amount)}
-                  className="px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded-full text-sm font-medium text-gray-700 transition-colors"
+                  className={`px-3 py-1 rounded-full text-sm font-medium transition-colors ${
+                    formData.amount === amount.toString()
+                      ? 'bg-blue-500 text-white'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
                 >
                   ${amount}
                 </button>
@@ -244,50 +266,61 @@ export default function Expense() {
             <label className="block text-sm font-medium text-gray-700 mb-3">
               Category
             </label>
-            <div className="grid grid-cols-3 gap-3">
-              {categories.map((category) => (
-                <button
-                  key={category.id}
-                  type="button"
-                  onClick={() => handleCategorySelect(category.id)}
-                  className={`p-4 rounded-xl border-2 transition-all ${
-                    formData.categoryId === category.id
-                      ? 'border-blue-500 bg-blue-50'
-                      : 'border-gray-200 hover:border-gray-300 bg-white'
-                  }`}
-                >
-                  <div className="flex flex-col items-center gap-2">
-                    <div 
-                      className="w-8 h-8 rounded-full flex items-center justify-center text-white"
-                      style={{ backgroundColor: category.color }}
-                    >
-                      <span className="material-symbols-outlined text-lg">
-                        {category.icon || 'category'}
+            {expenseCategories.length > 0 ? (
+              <div className="grid grid-cols-3 gap-3">
+                {expenseCategories.map((category) => (
+                  <button
+                    key={category.id}
+                    type="button"
+                    onClick={() => handleCategorySelect(category.id)}
+                    className={`p-4 rounded-xl border-2 transition-all ${
+                      formData.categoryId === category.id
+                        ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200'
+                        : 'border-gray-200 hover:border-gray-300 bg-white hover:shadow-md'
+                    }`}
+                  >
+                    <div className="flex flex-col items-center gap-2">
+                      <div 
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-white"
+                        style={{ backgroundColor: category.color }}
+                      >
+                        <span className="material-symbols-outlined text-lg">
+                          {category.icon || 'category'}
+                        </span>
+                      </div>
+                      <span className="text-xs font-medium text-gray-700 text-center">
+                        {category.name}
                       </span>
                     </div>
-                    <span className="text-xs font-medium text-gray-700 text-center">
-                      {category.name}
-                    </span>
-                  </div>
-                </button>
-              ))}
-            </div>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <span className="material-symbols-outlined text-4xl mb-2 block">category</span>
+                <p>No expense categories available</p>
+                <p className="text-sm">Please add categories in settings</p>
+              </div>
+            )}
           </div>
 
           {/* Submit Button */}
           <div className="pt-4">
             <button
               type="submit"
-              disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-xl transition-colors"
+              disabled={loading || !formData.amount || !formData.categoryId || !formData.accountId}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold py-4 px-6 rounded-xl transition-colors flex items-center justify-center gap-2"
             >
               {loading ? (
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  Adding Expense...
-                </div>
+                <>
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                  <span>Adding Expense...</span>
+                </>
               ) : (
-                'Add Expense'
+                <>
+                  <span className="material-symbols-outlined">add</span>
+                  <span>Add Expense</span>
+                </>
               )}
             </button>
           </div>

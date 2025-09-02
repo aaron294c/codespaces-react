@@ -20,7 +20,7 @@ export default function Welcome() {
   // Redirect if already authenticated
   useEffect(() => {
     if (!authLoading && session) {
-      const from = location.state?.from?.pathname || '/dashboard';
+      const from = location.state?.from?.pathname || '/onboarding';
       navigate(from, { replace: true });
     }
   }, [session, authLoading, navigate, location]);
@@ -58,7 +58,7 @@ export default function Welcome() {
           email: formData.email,
           password: formData.password,
           options: {
-            emailRedirectTo: `${window.location.origin}/dashboard`
+            emailRedirectTo: `${window.location.origin}/onboarding`
           }
         });
 
@@ -68,7 +68,7 @@ export default function Welcome() {
           toast.success('Please check your email for verification link');
         } else if (data?.session) {
           toast.success('Account created successfully!');
-          // Auth state change will handle navigation
+          navigate('/onboarding');
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({
@@ -79,7 +79,7 @@ export default function Welcome() {
         if (error) throw error;
         
         toast.success('Signed in successfully!');
-        // Auth state change will handle navigation
+        navigate('/onboarding');
       }
     } catch (error) {
       console.error('Auth error:', error);
@@ -95,7 +95,7 @@ export default function Welcome() {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',
         options: {
-          redirectTo: `${window.location.origin}/dashboard`
+          redirectTo: `${window.location.origin}/onboarding`
         }
       });
 
@@ -103,6 +103,46 @@ export default function Welcome() {
     } catch (error) {
       console.error('Google auth error:', error);
       toast.error('Google sign in failed');
+      setLoading(false);
+    }
+  };
+
+  // Quick test mode for development
+  const handleQuickTest = async () => {
+    setLoading(true);
+    try {
+      // Try to sign in with test credentials
+      let { error } = await supabase.auth.signInWithPassword({
+        email: 'test@example.com',
+        password: 'password123'
+      });
+
+      if (error && error.message.includes('Invalid login credentials')) {
+        // Create test account
+        const { error: signUpError } = await supabase.auth.signUp({
+          email: 'test@example.com',
+          password: 'password123'
+        });
+        
+        if (signUpError) throw signUpError;
+        
+        // Try to sign in again
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: 'test@example.com',
+          password: 'password123'
+        });
+        
+        if (signInError) throw signInError;
+      } else if (error) {
+        throw error;
+      }
+
+      toast.success('Test login successful!');
+      navigate('/onboarding');
+    } catch (error) {
+      console.error('Test login error:', error);
+      toast.error('Test login failed: ' + error.message);
+    } finally {
       setLoading(false);
     }
   };
@@ -134,6 +174,29 @@ export default function Welcome() {
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
         <div className="bg-white py-8 px-4 shadow-lg rounded-lg sm:px-10">
+          {/* Quick Test Button */}
+          <div className="mb-6">
+            <button
+              onClick={handleQuickTest}
+              disabled={loading}
+              className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-md transition-colors disabled:opacity-50"
+            >
+              🚀 Quick Test Login
+            </button>
+            <p className="text-xs text-gray-500 text-center mt-2">
+              Skip setup with test account
+            </p>
+          </div>
+
+          <div className="relative mb-6">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300" />
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-2 bg-white text-gray-500">Or use your own account</span>
+            </div>
+          </div>
+
           <form className="space-y-6" onSubmit={handleSubmit}>
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700">
@@ -168,7 +231,7 @@ export default function Welcome() {
                   value={formData.password}
                   onChange={handleInputChange}
                   className="appearance-none block w-full px-3 py-2 border border-gray-300 rounded-md placeholder-gray-400 focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm"
-                  placeholder={isSignUp ? "Create a password" : "Enter your password"}
+                  placeholder={isSignUp ? "Create a password (min 6 chars)" : "Enter your password"}
                 />
               </div>
             </div>
@@ -257,3 +320,5 @@ export default function Welcome() {
         </div>
       </div>
     </div>
+  );
+}
